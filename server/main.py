@@ -8,10 +8,7 @@ import google.generativeai as genai
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# room_id -> {"clients": {cid: ws}, "pending": {reqId: Future}}
 ROOMS: dict[str, dict] = {}
-
-# ตั้งค่า Gemini
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
@@ -47,26 +44,21 @@ async def ws_roblox(ws: WebSocket, room: str = "default"):
     cid = "rbx_" + uuid.uuid4().hex[:8]
     ROOMS.setdefault(room, {"clients": {}, "pending": {}})
     ROOMS[room]["clients"][cid] = ws
-    print(f"[ws] {cid} joined room={room}")
     try:
         while True:
             msg = await ws.receive_text()
             data = json.loads(msg)
-            if data.get("type") == "handshake":
-                continue
+            if data.get("type") == "handshake": continue
             reqId = data.get("reqId")
             if reqId and reqId in ROOMS[room]["pending"]:
                 fut = ROOMS[room]["pending"].pop(reqId)
-                if not fut.done():
-                    fut.set_result(data)
+                if not fut.done(): fut.set_result(data)
     except WebSocketDisconnect:
         ROOMS[room]["clients"].pop(cid, None)
-        print(f"[ws] {cid} left")
 
-async def call_bridge(room: str, tool: str, args: dict, timeout: float = 30.0) -> dict:
+async def call_bridge(room: str, tool: str, args: dict, timeout: float = 3.0) -> dict:
     clients = ROOMS.get(room, {}).get("clients", {})
-    if not clients:
-        return {"success": False, "error": "no bridge connected in room " + room}
+    if not clients: return {"success": False, "error": "no bridge"}
     ws = next(iter(clients.values()))
     reqId = uuid.uuid4().hex
     fut = asyncio.get_event_loop().create_future()
@@ -78,64 +70,39 @@ async def call_bridge(room: str, tool: str, args: dict, timeout: float = 30.0) -
         ROOMS[room]["pending"].pop(reqId, None)
         return {"success": False, "error": "timeout"}
 
-class CallReq(BaseModel):
-    room: str = "default"
-    tool: str
-    args: dict = {}
-
-@app.post("/call")
-async def call_endpoint(req: CallReq):
-    return await call_bridge(req.room, req.tool, req.args)
-
-# ── AI CHAT ENDPOINT ──
 class ChatReq(BaseModel):
     room: str = "default"
     message: str
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatReq):
-    if not GEMINI_KEY:
-        return {"reply": "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Render"}
+    if not GEMINI_KEY: return {"reply": "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY"}
     
-    # 1. เช็คสถานะการเชื่อมต่อก่อน
-    clients = ROOMS.get(req.room, {}).get("clients", {})
-    is_connected = len(clients) > 0
+    is_connected = len(ROOMS.get(req.room, {}).get("clients", {})) > 0
+    game_context = "ไม่ได้เชื่อมต่อกับเกม (ตอบคำถามทั่วไปได้เลย)"
     
-    # 2. ถ้าเชื่อมต่ออยู่ ให้ดึงข้อมูลเกมมาด้วย
-    game_context = "ไม่ได้เชื่อมต่อกับเกม Roblox ในขณะนี้ (ห้ามบอกว่ารันสคริปต์สำเร็จ ให้บอกว่าเป็นเพียงโค้ดตัวอย่างที่สามารถเอาไปรันเองได้)"
     if is_connected:
         state = await call_bridge(req.room, "get_game_state", {})
-        game_context = f"เชื่อมต่อเกมอยู่ ข้อมูลปัจจุบัน: {json.dumps(state)}"
+        if state.get("success"):
+            game_context = f"เชื่อมต่อเกมอยู่ ข้อมูล: {json.dumps(state.get('output'))}"
     
-    # 3. สร้าง System Prompt
-    system_prompt = f"""
-    You are an expert Roblox AI Assistant. You can chat normally and help write Lua scripts.
-    Status: {game_context}
-    
-    If connected, you can execute Lua code automatically by formatting it like:
-    ```lua
-    -- your code here
-    ```
-    If not connected, just answer general questions or provide code for the user to copy manually.
-    """
+    system_prompt = f"You are an expert Roblox AI. Status: {game_context}. If you write Lua code, format it with ```lua and it will run automatically."
     
     try:
-        model = genai.GenerativeModel('gemini-3.8-flash', system_instruction=system_prompt)
+        # แนะนำให้ใช้ 2.5-flash ถ้า 3.8 ยังไม่รองรับ
+        model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
         response = model.generate_content(req.message)
         text = response.text
         
-        # 4. ตรวจหาโค้ด Lua ในคำตอบ (จะรันก็ต่อเมื่อเชื่อมต่อแล้วเท่านั้น)
         executed = False
         if is_connected and "```lua" in text:
             code = text.split("```lua")[1].split("```")[0].strip()
-            # สั่งรันโค้ด
             res = await call_bridge(req.room, "run_script", {"code": code})
             if res.get("success"):
                 text += "\n\n✅ *สคริปต์ถูกนำไปรันในเกมแล้ว*"
                 executed = True
             else:
-                text += f"\n\n❌ *รันสคริปต์ล้มเหลว:* {res.get('error')}"
-                
+                text += f"\n\n❌ *รันไม่สำเร็จ:* {res.get('error')}"
         return {"reply": text, "executed": executed}
     except Exception as e:
-        return {"reply": f"AI Error: {str(e)}"}
+        return {"reply": f"AI Error: {str(e)} (ลองแก้ชื่อโมเดลเป็น gemini-2.5-flash หรือ 1.5-pro ดูครับ)"}
