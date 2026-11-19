@@ -126,9 +126,9 @@ async def chat_endpoint(req: ChatReq):
 
     async def generate():
         try:
-            # เปลี่ยนมาใช้ Llama 3.1 8B ซึ่งตอนนี้ยังเปิดให้ใช้ฟรี
+            # ใช้ Free Models Router เพื่อให้ OpenRouter เลือกโมเดลฟรีที่ยังใช้งานได้ให้เอง
             response = await client.chat.completions.create(
-                model="meta-llama/llama-3.1-8b-instruct:free",
+                model="openrouter/free",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": req.message}
