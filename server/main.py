@@ -1,9 +1,9 @@
-# rbx-ai-bridge — MVP backend
 import asyncio, json, uuid, os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import google.generativeai as genai
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -11,9 +11,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # room_id -> {"clients": {cid: ws}, "pending": {reqId: Future}}
 ROOMS: dict[str, dict] = {}
 
+# ตั้งค่า Gemini
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+
 @app.get("/health")
 async def health():
     return {"ok": True, "rooms": list(ROOMS.keys())}
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "index.html"), encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return "<h1>index.html not found</h1>"
 
 @app.get("/bridge.luau", response_class=PlainTextResponse)
 async def serve_bridge(room: str = "default", host: str = None):
@@ -23,7 +36,6 @@ async def serve_bridge(room: str = "default", host: str = None):
             src = f.read()
     except Exception as e:
         return f"-- Error loading bridge.luau: {e}"
-        
     src = src.replace('ROOM_ID     = "default"', f'ROOM_ID     = "{room}"')
     if host:
         src = src.replace('SERVER_HOST = "PLACEHOLDER.onrender.com"', f'SERVER_HOST = "{host}"')
@@ -41,7 +53,6 @@ async def ws_roblox(ws: WebSocket, room: str = "default"):
             msg = await ws.receive_text()
             data = json.loads(msg)
             if data.get("type") == "handshake":
-                print(f"[ws] handshake from {cid}: {data}")
                 continue
             reqId = data.get("reqId")
             if reqId and reqId in ROOMS[room]["pending"]:
@@ -74,5 +85,48 @@ class CallReq(BaseModel):
 
 @app.post("/call")
 async def call_endpoint(req: CallReq):
-    """ทดสอบสั่ง tool ตรง ๆ ไม่ผ่าน AI"""
     return await call_bridge(req.room, req.tool, req.args)
+
+# ── AI CHAT ENDPOINT ──
+class ChatReq(BaseModel):
+    room: str = "default"
+    message: str
+
+@app.post("/chat")
+async def chat_endpoint(req: ChatReq):
+    if not GEMINI_KEY:
+        return {"reply": "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Render"}
+    
+    # ดึงข้อมูลเกมเบื้องต้นมาให้ AI ดู (ถ้าเชื่อมต่ออยู่)
+    state = await call_bridge(req.room, "get_game_state", {})
+    
+    # สร้าง System Prompt
+    system_prompt = f"""
+    You are an expert Roblox AI Assistant connected via a bridge.
+    Current game state: {json.dumps(state)}
+    If user wants a script, write Lua code. If you write code, it will be executed automatically if you format it like:
+    ```lua
+    -- your code here
+    ```
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=system_prompt)
+        response = model.generate_content(req.message)
+        text = response.text
+        
+        # ตรวจหาโค้ด Lua ในคำตอบ
+        executed = False
+        if "```lua" in text:
+            code = text.split("```lua")[1].split("```")[0].strip()
+            # สั่งรันโค้ด
+            res = await call_bridge(req.room, "run_script", {"code": code})
+            if res.get("success"):
+                text += "\n\n✅ *สคริปต์ถูกนำไปรันในเกมแล้ว*"
+                executed = True
+            else:
+                text += f"\n\n❌ *รันสคริปต์ล้มเหลว:* {res.get('error')}"
+                
+        return {"reply": text, "executed": executed}
+    except Exception as e:
+        return {"reply": f"AI Error: {str(e)}"}
