@@ -120,7 +120,7 @@ async def chat_endpoint(req: ChatReq):
     """
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_prompt)
+        model = genai.GenerativeModel('gemini-3.8-flash', system_instruction=system_prompt)
         response = model.generate_content(req.message)
         text = response.text
         
