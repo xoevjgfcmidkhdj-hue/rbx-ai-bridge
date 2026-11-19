@@ -1,7 +1,3 @@
---[[
-    rbx-ai-bridge — MVP Bridge v0.2 (Heartbeat Added)
-]]
-
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local StarterGui  = game:GetService("StarterGui")
@@ -102,7 +98,6 @@ local function startWS()
     }))
     notify("เชื่อมต่อแล้ว: " .. ROOM_ID)
 
-    -- 🔥 ระบบ Heartbeat ส่ง Ping ทุก 10 วิ
     task.spawn(function()
         while isConnected and wsConn == ws do
             task.wait(10)
