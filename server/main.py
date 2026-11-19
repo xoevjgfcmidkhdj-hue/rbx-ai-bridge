@@ -21,7 +21,6 @@ client = openai.AsyncOpenAI(
 )
 
 def clean_stale_rooms():
-    """ลบ Client ที่หายไปเกิน 40 วินาทีออกจากระบบ"""
     now = time.time()
     for room in list(ROOMS.keys()):
         for cid, info in list(ROOMS[room]["clients"].items()):
@@ -112,7 +111,7 @@ async def chat_endpoint(req: ChatReq):
     game_keywords = ["แมพ", "map", "ผู้เล่น", "player", "esp", "aimbot", "god mode", "วาร์ป", "teleport", "เลือด", "health", "ตำแหน่ง", "position", "เช็คเกม", "ดูในเกม", "มีใครบ้าง", "ทำสคริปต์ในเกม"]
     needs_game_data = any(k in msg_lower for k in game_keywords)
     
-    game_context = "ไม่ได้เชื่อมต่อกับเกม"
+    game_context = "ไม่ได้เชื่อมต่อกับเกม (คุณสามารถคุยเล่น ถามความรู้ หรือให้เขียนสคริปต์ได้ แต่จะไม่มีการรันสคริปต์ลงเกม)"
     if is_connected:
         if needs_game_data:
             state = await call_bridge(req.room, "get_game_state", {})
@@ -127,8 +126,9 @@ async def chat_endpoint(req: ChatReq):
 
     async def generate():
         try:
+            # เปลี่ยนมาใช้ Llama 3.1 8B ซึ่งตอนนี้ยังเปิดให้ใช้ฟรี
             response = await client.chat.completions.create(
-                model="meta-llama/llama-3.3-70b-instruct:free",
+                model="meta-llama/llama-3.1-8b-instruct:free",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": req.message}
