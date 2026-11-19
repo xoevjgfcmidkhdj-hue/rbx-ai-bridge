@@ -1,6 +1,6 @@
 -- rbx-ai-bridge loader
 local ROOM = "default"
-local HOST = "PLACEHOLDER.onrender.com"
+local HOST = "rbx-ai-bridge.onrender.com"
 local URL  = "https://" .. HOST .. "/bridge.luau?room=" .. ROOM .. "&host=" .. HOST .. "&t=" .. tostring(os.time())
 
 local req = (syn and syn.request) or (http and http.request) or http_request or request
