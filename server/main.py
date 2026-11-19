@@ -89,8 +89,8 @@ async def chat_endpoint(req: ChatReq):
     system_prompt = f"You are an expert Roblox AI. Status: {game_context}. If you write Lua code, format it with ```lua and it will run automatically."
     
     try:
-        # แนะนำให้ใช้ 2.5-flash ถ้า 3.8 ยังไม่รองรับ
-        model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_prompt)
+        # อัปเดตเป็นโมเดลที่ Google แนะนำใน Error
+        model = genai.GenerativeModel('gemini-3.8-flash', system_instruction=system_prompt)
         response = model.generate_content(req.message)
         text = response.text
         
@@ -105,4 +105,4 @@ async def chat_endpoint(req: ChatReq):
                 text += f"\n\n❌ *รันไม่สำเร็จ:* {res.get('error')}"
         return {"reply": text, "executed": executed}
     except Exception as e:
-        return {"reply": f"AI Error: {str(e)} (ลองแก้ชื่อโมเดลเป็น gemini-2.5-flash หรือ 1.5-pro ดูครับ)"}
+        return {"reply": f"AI Error: {str(e)}"}
