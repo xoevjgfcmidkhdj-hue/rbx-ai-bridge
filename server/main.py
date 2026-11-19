@@ -97,27 +97,36 @@ async def chat_endpoint(req: ChatReq):
     if not GEMINI_KEY:
         return {"reply": "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Render"}
     
-    # ดึงข้อมูลเกมเบื้องต้นมาให้ AI ดู (ถ้าเชื่อมต่ออยู่)
-    state = await call_bridge(req.room, "get_game_state", {})
+    # 1. เช็คสถานะการเชื่อมต่อก่อน
+    clients = ROOMS.get(req.room, {}).get("clients", {})
+    is_connected = len(clients) > 0
     
-    # สร้าง System Prompt
+    # 2. ถ้าเชื่อมต่ออยู่ ให้ดึงข้อมูลเกมมาด้วย
+    game_context = "ไม่ได้เชื่อมต่อกับเกม Roblox ในขณะนี้ (ห้ามบอกว่ารันสคริปต์สำเร็จ ให้บอกว่าเป็นเพียงโค้ดตัวอย่างที่สามารถเอาไปรันเองได้)"
+    if is_connected:
+        state = await call_bridge(req.room, "get_game_state", {})
+        game_context = f"เชื่อมต่อเกมอยู่ ข้อมูลปัจจุบัน: {json.dumps(state)}"
+    
+    # 3. สร้าง System Prompt
     system_prompt = f"""
-    You are an expert Roblox AI Assistant connected via a bridge.
-    Current game state: {json.dumps(state)}
-    If user wants a script, write Lua code. If you write code, it will be executed automatically if you format it like:
+    You are an expert Roblox AI Assistant. You can chat normally and help write Lua scripts.
+    Status: {game_context}
+    
+    If connected, you can execute Lua code automatically by formatting it like:
     ```lua
     -- your code here
     ```
+    If not connected, just answer general questions or provide code for the user to copy manually.
     """
     
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=system_prompt)
+        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_prompt)
         response = model.generate_content(req.message)
         text = response.text
         
-        # ตรวจหาโค้ด Lua ในคำตอบ
+        # 4. ตรวจหาโค้ด Lua ในคำตอบ (จะรันก็ต่อเมื่อเชื่อมต่อแล้วเท่านั้น)
         executed = False
-        if "```lua" in text:
+        if is_connected and "```lua" in text:
             code = text.split("```lua")[1].split("```")[0].strip()
             # สั่งรันโค้ด
             res = await call_bridge(req.room, "run_script", {"code": code})
